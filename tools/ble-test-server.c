@@ -95,6 +95,9 @@ struct server {
 	int hr_ee_count;
 	unsigned int hr_timeout_id;
 
+	/* ble rate */
+	uint16_t w_handle;
+
 	uint8_t *data;
 	uint16_t handle;
 	uint16_t length;
@@ -368,32 +371,50 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-static void hr_control_point_write_cb(struct gatt_db_attribute *attrib,
+static void ble_rate_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+
+	//struct server *server = user_data;
 	uint8_t ecode = 0;
+	static uint32_t count = 0;
 
-	if (!value || len != 1) {
-		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
-		goto done;
-	}
+	// TODO: processing data
+	count += len;
+	PRLOG("received %d bytes in total.\n", count);
 
-	if (offset) {
-		ecode = BT_ATT_ERROR_INVALID_OFFSET;
-		goto done;
-	}
+	gatt_db_attribute_write_result(attrib, id, ecode);
+}
 
-	if (value[0] == 1) {
-		PRLOG("HR: Energy Expended value reset\n");
-		server->hr_energy_expended = 0;
-	}
+static void hr_control_point_write_cb(struct gatt_db_attribute *attrib,
+                                       unsigned int id, uint16_t offset,
+                                       const uint8_t *value, size_t len,
+                                       uint8_t opcode, struct bt_att *att,
+                                       void *user_data)
+{
+       struct server *server = user_data;
+       uint8_t ecode = 0;
+
+       if (!value || len != 1) {
+               ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+               goto done;
+       }
+
+       if (offset) {
+               ecode = BT_ATT_ERROR_INVALID_OFFSET;
+               goto done;
+       }
+
+       if (value[0] == 1) {
+               PRLOG("HR: Energy Expended value reset\n");
+               server->hr_energy_expended = 0;
+       }
 
 done:
-	gatt_db_attribute_write_result(attrib, id, ecode);
+       gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
 static void confirm_write(struct gatt_db_attribute *attr, int err,
@@ -535,11 +556,64 @@ static void populate_hr_service(struct server *server)
 		gatt_db_service_set_active(service, true);
 }
 
+#define UUID_BLE_RATE 		0xFFDD
+#define UUID_BLE_RATE_WRITE_REQ 0xFFD1
+#define UUID_BLE_RATE_IND	0xFFD2
+
+static void populate_rate_service(struct server *server)
+{
+	bt_uuid_t uuid;
+	struct gatt_db_attribute *service;
+
+	/* Add Heart Rate Service */
+	bt_uuid16_create(&uuid, UUID_BLE_RATE);
+	service = gatt_db_add_service(server->db, &uuid, true, 3);
+	server->w_handle = gatt_db_attribute_get_handle(service);
+
+	///* HR Measurement Characteristic */
+	//bt_uuid16_create(&uuid, UUID_HEART_RATE_MSRMT);
+	//hr_msrmt = gatt_db_service_add_characteristic(service, &uuid,
+	//					BT_ATT_PERM_NONE,
+	//					BT_GATT_CHRC_PROP_NOTIFY,
+	//					NULL, NULL, NULL);
+	//server->hr_msrmt_handle = gatt_db_attribute_get_handle(hr_msrmt);
+
+	//bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
+	//gatt_db_service_add_descriptor(service, &uuid,
+	//				BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
+	//				hr_msrmt_ccc_read_cb,
+	//				hr_msrmt_ccc_write_cb, server);
+
+	///*
+	// * Body Sensor Location Characteristic. Make reads obtain the value from
+	// * the database.
+	// */
+	//bt_uuid16_create(&uuid, UUID_HEART_RATE_BODY);
+	//body = gatt_db_service_add_characteristic(service, &uuid,
+	//					BT_ATT_PERM_READ,
+	//					BT_GATT_CHRC_PROP_READ,
+	//					NULL, NULL, server);
+	//gatt_db_attribute_write(body, 0, (void *) &body_loc, sizeof(body_loc),
+	//						BT_ATT_OP_WRITE_REQ,
+	//						NULL, confirm_write,
+	//						NULL);
+
+	/* HR Control Point Characteristic */
+	bt_uuid16_create(&uuid, UUID_BLE_RATE_WRITE_REQ);
+	gatt_db_service_add_characteristic(service, &uuid,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE,
+						NULL, ble_rate_write_cb,
+						server);
+
+	gatt_db_service_set_active(service, true);
+}
 static void populate_db(struct server *server)
 {
 	populate_gap_service(server);
 	populate_gatt_service(server);
 	populate_hr_service(server);
+	populate_rate_service(server);
 }
 
 static struct server *server_create(int fd, uint16_t mtu, bool hr_visible)
