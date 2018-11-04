@@ -184,7 +184,8 @@ noinst_PROGRAMS += tools/bdaddr tools/avinfo tools/avtest \
 			tools/eddystone tools/ibeacon \
 			tools/btgatt-client tools/btgatt-server \
 			tools/test-runner tools/check-selftest \
-			tools/gatt-service profiles/iap/iapd
+			tools/gatt-service profiles/iap/iapd \
+			tools/ble-test-server tools/ble-test-client
 
 tools_bdaddr_SOURCES = tools/bdaddr.c src/oui.h src/oui.c
 tools_bdaddr_LDADD = lib/libbluetooth-internal.la @UDEV_LIBS@
@@ -260,6 +261,14 @@ tools_btgatt_client_LDADD = src/libshared-mainloop.la \
 
 tools_btgatt_server_SOURCES = tools/btgatt-server.c src/uuid-helper.c
 tools_btgatt_server_LDADD = src/libshared-mainloop.la \
+						lib/libbluetooth-internal.la
+
+tools_ble_test_server_SOURCES = tools/ble-test-server.c src/uuid-helper.c
+tools_ble_test_server_LDADD = src/libshared-mainloop.la \
+						lib/libbluetooth-internal.la
+
+tools_ble_test_client_SOURCES = tools/ble-test-client.c src/uuid-helper.c
+tools_ble_test_client_LDADD = src/libshared-mainloop.la \
 						lib/libbluetooth-internal.la
 
 tools_rctest_LDADD = lib/libbluetooth-internal.la
