@@ -379,10 +379,18 @@ done:
 static bool time_cb_print_rate(void *user_data)
 {
 	struct server *server = user_data;
+	int rate;
+
+	rate = server->count -server->old_count;
 	
-	PRLOG("Rate: %d Bytes/s\n", server->count - server->old_count);
+	PRLOG("Rate: %d Bytes/s\n", rate);
 	server->old_count = server->count;
 
+	if (!rate) {
+		timeout_remove(server->timer_id_count);
+		server->timer_id_count  = 0;
+		return false;
+	}
 	return true;
 }
 
@@ -576,55 +584,40 @@ static void populate_hr_service(struct server *server)
 }
 
 #define UUID_BLE_RATE 		0xFFDD
-#define UUID_BLE_RATE_WRITE_REQ 0xFFD1
+#define UUID_BLE_RATE_WRITE	0xFFD1
 #define UUID_BLE_RATE_IND	0xFFD2
 
 static void populate_rate_service(struct server *server)
 {
 	bt_uuid_t uuid;
-	struct gatt_db_attribute *service;
+	struct gatt_db_attribute *service, *ind_char;
 
 	/* Add Heart Rate Service */
 	bt_uuid16_create(&uuid, UUID_BLE_RATE);
 	service = gatt_db_add_service(server->db, &uuid, true, 3);
 	server->w_handle = gatt_db_attribute_get_handle(service);
 
-	///* HR Measurement Characteristic */
-	//bt_uuid16_create(&uuid, UUID_HEART_RATE_MSRMT);
-	//hr_msrmt = gatt_db_service_add_characteristic(service, &uuid,
-	//					BT_ATT_PERM_NONE,
-	//					BT_GATT_CHRC_PROP_NOTIFY,
-	//					NULL, NULL, NULL);
-	//server->hr_msrmt_handle = gatt_db_attribute_get_handle(hr_msrmt);
 
-	//bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
-	//gatt_db_service_add_descriptor(service, &uuid,
-	//				BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
-	//				hr_msrmt_ccc_read_cb,
-	//				hr_msrmt_ccc_write_cb, server);
-
-	///*
-	// * Body Sensor Location Characteristic. Make reads obtain the value from
-	// * the database.
-	// */
-	//bt_uuid16_create(&uuid, UUID_HEART_RATE_BODY);
-	//body = gatt_db_service_add_characteristic(service, &uuid,
-	//					BT_ATT_PERM_READ,
-	//					BT_GATT_CHRC_PROP_READ,
-	//					NULL, NULL, server);
-	//gatt_db_attribute_write(body, 0, (void *) &body_loc, sizeof(body_loc),
-	//						BT_ATT_OP_WRITE_REQ,
-	//						NULL, confirm_write,
-	//						NULL);
-
-	/* HR Control Point Characteristic */
-	bt_uuid16_create(&uuid, UUID_BLE_RATE_WRITE_REQ);
+	bt_uuid16_create(&uuid, UUID_BLE_RATE_WRITE);
 	gatt_db_service_add_characteristic(service, &uuid,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE |
 						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
 						NULL, ble_rate_write_cb,
 						server);
+
+	bt_uuid16_create(&uuid, UUID_BLE_RATE_IND);
+	ind_char = gatt_db_service_add_characteristic(service, &uuid,
+						BT_ATT_PERM_NONE,
+						BT_GATT_CHRC_PROP_NOTIFY,
+						NULL, NULL, NULL);
+	server->hr_msrmt_handle = gatt_db_attribute_get_handle(ind_char);
+
+	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
+	gatt_db_service_add_descriptor(service, &uuid,
+					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
+					NULL,
+					ind_ccc_write_cb, server);
 
 	gatt_db_service_set_active(service, true);
 }
