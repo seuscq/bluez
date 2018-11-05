@@ -69,6 +69,16 @@ struct client {
 	struct bt_gatt_client *gatt;
 
 	unsigned int reliable_session_id;
+
+	/* ble test */
+	uint16_t w_handle;
+	uint16_t w_length;
+	uint8_t *w_value;
+	bool 	is_receiving;
+	bool 	stop_receiving;
+	bool 	is_sending;
+	bool 	stop_sending;
+	
 };
 
 static void print_prompt(void)
@@ -184,6 +194,11 @@ static struct client *client_create(int fd, uint16_t mtu)
 		fprintf(stderr, "Failed to allocate memory for client\n");
 		return NULL;
 	}
+
+	cli->is_receiving = false;
+	cli->stop_receiving = false;
+	cli->is_sending = false;
+	cli->stop_sending = false;
 
 	cli->att = bt_att_new(fd, false);
 	if (!cli->att) {
@@ -563,6 +578,64 @@ static void read_cb(bool success, uint8_t att_ecode, const uint8_t *value,
 	PRLOG("\n");
 }
 
+static void cmd_stop_usage(void)
+{
+	printf("Usage: stop option\n"
+		"Options:\n"
+		"\t-r, stop receiving from server\n"
+		"\t-s, stop sending to server\n");
+}
+
+static void cmd_stop(struct client *cli, char *cmd_str)
+{
+	char *argv[2];
+	int argc = 0;
+	//int i;
+
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	if (!parse_args(cmd_str, 1, argv, &argc)) {
+		cmd_stop_usage();
+		return;
+	}
+
+	//for (i = 0; i < argc; i++)
+		//printf("argv[%d] = %s\t\t", i, argv[i]);
+	printf("\n");
+	if (argc != 1) {
+		cmd_stop_usage();
+		return;
+	}
+
+	if (!strcmp(argv[0], "-r")) {
+		// stop receiving;
+		if (cli->is_receiving) {
+			cli->stop_receiving = true;
+			cli->is_receiving = false;
+		} else {
+			printf("currently not receiving\n");
+		}
+		return;
+			
+	} else if (!strcmp(argv[0], "-s")) {
+		if (cli->is_sending) {
+			cli->stop_sending = true;
+			cli->is_sending = false;
+		}
+		else
+			printf("currently not sending\n");
+		return;
+		
+	} else { 
+		cmd_stop_usage();
+		return;
+	}
+		
+}
+
 static void cmd_read_value(struct client *cli, char *cmd_str)
 {
 	char *argv[2];
@@ -650,8 +723,17 @@ static struct option write_value_options[] = {
 
 static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 {
+	struct client *cli = user_data;
 	if (success) {
-		PRLOG("\nWrite successful\n");
+	//	PRLOG("\nWrite successful\n");
+		if (!cli->stop_sending) {
+			if (!bt_gatt_client_write_value(cli->gatt, 
+						cli->w_handle, cli->w_value, cli->w_length,
+						write_cb, cli, NULL))
+				printf("Failed to initiate write procedure\n");
+
+		}
+		
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
 				ecode_to_string(att_ecode), att_ecode);
@@ -751,9 +833,16 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 		goto done;
 	}
 
+	cli->w_value = malloc(length);
+	memcpy(cli->w_value, value, length);
+	cli->w_length = length;
+	cli->w_handle = handle;
+	cli->is_sending = true;
+	cli->stop_sending = false;
+
 	if (!bt_gatt_client_write_value(cli->gatt, handle, value, length,
 								write_cb,
-								NULL, NULL))
+								cli, NULL))
 		printf("Failed to initiate write procedure\n");
 
 done:
@@ -1316,6 +1405,7 @@ static struct {
 	char *doc;
 } command[] = {
 	{ "help", cmd_help, "\tDisplay help message" },
+	{ "stop", cmd_stop, "\tstop test" },
 	{ "services", cmd_services, "\tShow discovered services" },
 	{ "read-value", cmd_read_value,
 				"\tRead a characteristic or descriptor value" },
