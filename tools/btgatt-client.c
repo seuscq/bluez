@@ -80,6 +80,10 @@ struct client {
 	bool 	is_sending;
 	bool 	stop_sending;
 	uint32_t timer_id_send;
+
+	int counter;
+	uint16_t payload_len;
+	uint16_t interval;
 	
 };
 
@@ -639,6 +643,109 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 		
 }
 
+static void cmd_start_tx_usage(void)
+{
+	printf("Usage: start_tx <handle> <interval> <payload length>\n");
+}
+
+static bool send_cb(void *user_data)
+{
+	struct client *cli = user_data;
+	uint8_t *value;
+
+	value = malloc(cli->payload_len);
+	memset(value, cli->counter++, cli->payload_len);
+	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
+						false, value, cli->payload_len)) {
+		printf("Failed to initiate write without response procedure\n");	
+	}
+	free(value);
+	
+	if (cli->stop_sending) {
+		//timeout_remove(cli->timer_id_send);
+		cli->timer_id_send = 0;
+		free(cli->w_value);
+		return false;
+	}
+	return true;
+}
+
+static void cmd_start_tx(struct client *cli, char *cmd_str)
+{
+	char *argv[4];
+	int argc = 0;
+	uint16_t handle;
+	char *endptr = NULL;
+	uint16_t payload_len, interval;
+	uint8_t *value;
+	int i;
+
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	if (!parse_args(cmd_str, 3, argv, &argc)) {
+		cmd_start_tx_usage();
+		return;
+	}
+
+	for (i = 0; i < argc; i++)
+		printf("argv[%d] = %s\t\t", i, argv[i]);
+	printf("\n");
+	
+	if (argc != 3) {
+		cmd_start_tx_usage();
+		return;
+	}
+
+	handle = strtol(argv[0], &endptr, 16);
+	if (!endptr || *endptr != '\0' || !handle) {
+		printf("Invalid value handle: %s\n", argv[0]);
+		return;
+	}
+
+	payload_len = strtol(argv[2], &endptr, 10);
+	if (!endptr || *endptr != '\0' || !payload_len) {
+		printf("Invalid value payload length: %s\n", argv[2]);
+		return;
+	}
+
+	interval = strtol(argv[1], &endptr, 10);
+	if (!endptr || *endptr != '\0' || !interval) {
+		printf("Invalid value interval: %s\n", argv[1]);
+		return;
+	}
+	
+	cli->w_handle = handle;
+	cli->interval = interval;
+	cli->payload_len = payload_len;
+	
+	value = malloc(payload_len);
+	memset(value, cli->counter++, payload_len);
+
+	cli->is_sending = true;
+	cli->stop_sending = false;
+
+	printf("w_handle = 0x%04x, length = %d, interval = %d\n", cli->w_handle, cli->payload_len, cli->interval);
+	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
+					false, value, cli->payload_len)) {
+		printf("Failed to initiate write without response "
+							"procedure\n");
+		goto done;
+	}
+
+	if (!cli->timer_id_send) {
+		cli->timer_id_send = timeout_add(cli->interval, send_cb, cli, NULL);
+	}
+
+	printf("Write command sent\n");
+
+done:
+	free(value);
+
+		
+}
 static void cmd_read_value(struct client *cli, char *cmd_str)
 {
 	char *argv[2];
@@ -741,24 +848,6 @@ static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
 				ecode_to_string(att_ecode), att_ecode);
 	}
-}
-
-static bool send_cb(void *user_data)
-{
-	struct client *cli = user_data;
-
-	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
-						false, cli->w_value, cli->w_length)) {
-		printf("Failed to initiate write without response procedure\n");	
-	}
-	
-	if (cli->stop_sending) {
-		//timeout_remove(cli->timer_id_send);
-		cli->timer_id_send = 0;
-		free(cli->w_value);
-		return false;
-	}
-	return true;
 }
 
 static void cmd_write_value(struct client *cli, char *cmd_str)
@@ -1432,6 +1521,7 @@ static struct {
 } command[] = {
 	{ "help", cmd_help, "\tDisplay help message" },
 	{ "stop", cmd_stop, "\tstop test" },
+	{ "start_tx", cmd_start_tx, "\tstart test tx" },
 	{ "services", cmd_services, "\tShow discovered services" },
 	{ "read-value", cmd_read_value,
 				"\tRead a characteristic or descriptor value" },
