@@ -101,6 +101,11 @@ struct server {
 	uint8_t *data;
 	uint16_t handle;
 	uint16_t length;
+
+	uint32_t count;
+	uint32_t old_count;
+	uint32_t timer_id_count;
+
 };
 
 static void print_prompt(void)
@@ -371,6 +376,16 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
+static bool time_cb_print_rate(void *user_data)
+{
+	struct server *server = user_data;
+	
+	PRLOG("Rate: %d Bytes/s\n", server->count - server->old_count);
+	server->old_count = server->count;
+
+	return true;
+}
+
 static void ble_rate_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
@@ -378,13 +393,17 @@ static void ble_rate_write_cb(struct gatt_db_attribute *attrib,
 					void *user_data)
 {
 
-	//struct server *server = user_data;
+	struct server *server = user_data;
 	uint8_t ecode = 0;
 	static uint32_t count = 0;
 
 	// TODO: processing data
 	count += len;
-	PRLOG("received %d bytes in total.\n", count);
+	server->count = count;
+	if (!server->timer_id_count)
+		server->timer_id_count = timeout_add(1000, time_cb_print_rate, 
+							server, NULL);
+	//PRLOG("received %d bytes in total.\n", count);
 
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
@@ -602,7 +621,8 @@ static void populate_rate_service(struct server *server)
 	bt_uuid16_create(&uuid, UUID_BLE_RATE_WRITE_REQ);
 	gatt_db_service_add_characteristic(service, &uuid,
 						BT_ATT_PERM_WRITE,
-						BT_GATT_CHRC_PROP_WRITE,
+						BT_GATT_CHRC_PROP_WRITE |
+						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
 						NULL, ble_rate_write_cb,
 						server);
 
