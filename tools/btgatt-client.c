@@ -753,8 +753,9 @@ static bool send_cb(void *user_data)
 	}
 	
 	if (cli->stop_sending) {
-		timeout_remove(cli->timer_id_send);
+		//timeout_remove(cli->timer_id_send);
 		cli->timer_id_send = 0;
+		free(cli->w_value);
 		return false;
 	}
 	return true;
