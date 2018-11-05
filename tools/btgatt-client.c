@@ -45,6 +45,7 @@
 #include "src/shared/queue.h"
 #include "src/shared/gatt-db.h"
 #include "src/shared/gatt-client.h"
+#include "src/shared/timeout.h"
 
 #define ATT_CID 4
 
@@ -78,6 +79,7 @@ struct client {
 	bool 	stop_receiving;
 	bool 	is_sending;
 	bool 	stop_sending;
+	uint32_t timer_id_send;
 	
 };
 
@@ -622,6 +624,7 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 			
 	} else if (!strcmp(argv[0], "-s")) {
 		if (cli->is_sending) {
+			printf("stoping sending...\n");
 			cli->stop_sending = true;
 			cli->is_sending = false;
 		}
@@ -740,6 +743,23 @@ static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 	}
 }
 
+static bool send_cb(void *user_data)
+{
+	struct client *cli = user_data;
+
+	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
+						false, cli->w_value, cli->w_length)) {
+		printf("Failed to initiate write without response procedure\n");	
+	}
+	
+	if (cli->stop_sending) {
+		timeout_remove(cli->timer_id_send);
+		cli->timer_id_send = 0;
+		return false;
+	}
+	return true;
+}
+
 static void cmd_write_value(struct client *cli, char *cmd_str)
 {
 	int opt, i, val;
@@ -810,7 +830,7 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 		}
 
 		for (i = 1; i < argc; i++) {
-			val = strtol(argv[i], &endptr, 0);
+			val = strtol(argv[i], &endptr, 16);
 			if (endptr == argv[i] || *endptr != '\0'
 				|| errno == ERANGE || val < 0 || val > 255) {
 				printf("Invalid value byte: %s\n",
@@ -821,6 +841,13 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 		}
 	}
 
+	cli->w_value = malloc(length);
+	memcpy(cli->w_value, value, length);
+	cli->w_length = length;
+	cli->w_handle = handle;
+	cli->is_sending = true;
+	cli->stop_sending = false;
+
 	if (without_response) {
 		if (!bt_gatt_client_write_without_response(cli->gatt, handle,
 						signed_write, value, length)) {
@@ -829,16 +856,14 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 			goto done;
 		}
 
+		if (!cli->timer_id_send) {
+			cli->timer_id_send = timeout_add(2, send_cb, cli, NULL);
+		}
+
 		printf("Write command sent\n");
 		goto done;
 	}
 
-	cli->w_value = malloc(length);
-	memcpy(cli->w_value, value, length);
-	cli->w_length = length;
-	cli->w_handle = handle;
-	cli->is_sending = true;
-	cli->stop_sending = false;
 
 	if (!bt_gatt_client_write_value(cli->gatt, handle, value, length,
 								write_cb,
