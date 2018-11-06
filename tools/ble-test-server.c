@@ -683,6 +683,7 @@ static void ctl_write_cb(struct gatt_db_attribute *attrib,
 		printf("time elapsed %1fs\n", s);
 		printf("speed %1fB/s\n", server->total_tx/s);
 		printf("receive total Bytes %ld\n", server->total_tx);
+		server->total_tx = 0;
 		goto done;
 	} else if(value[0] == 0x01) {
 		if(server->ble_tx_enabled) {

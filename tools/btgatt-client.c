@@ -55,6 +55,7 @@
 #define UUID_BLE_RATE 		0xFFDD
 #define UUID_BLE_RATE_TX	0xFFD1
 
+#define UUID_BLE_RATE_TX_CTRL	0xFFD1
 #define UUID_BLE_RATE_RX	0xFFD2
 
 #define PRLOG(...) \
@@ -97,6 +98,7 @@ struct client {
 	struct timespec end;
 	long total_rx;
 	uint16_t ble_notif_handle;
+	uint16_t tx_ctl_handle;
 };
 
 static void print_prompt(void)
@@ -332,7 +334,7 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 	uint16_t handle, value_handle;
 	uint8_t properties;
 	uint16_t ext_prop;
-	bt_uuid_t uuid, uuid_rate_rx;
+	bt_uuid_t uuid, uuid_rate_rx, uuid_rate_ctl;
 
 	if (!gatt_db_attribute_get_char_data(attr, &handle,
 								&value_handle,
@@ -345,11 +347,14 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 				" - start: 0x%04x, value: 0x%04x, "
 				"props: 0x%02x, ext_props: 0x%04x, uuid: ",
 				handle, value_handle, properties, ext_prop);
+
 	bt_uuid16_create(&uuid_rate_rx, UUID_BLE_RATE_RX);
-	if(!bt_uuid_cmp(&uuid, &uuid_rate_rx)){
+	if(!bt_uuid_cmp(&uuid, &uuid_rate_rx))
 		cli->ble_notif_handle = value_handle + 1;
-		printf("ble notif handle = 0x%04x\n", cli->ble_notif_handle);
-	}
+
+	bt_uuid16_create(&uuid_rate_ctl, UUID_BLE_RATE_TX_CTRL);
+	if(!bt_uuid_cmp(&uuid, &uuid_rate_ctl))
+		cli->tx_ctl_handle = value_handle;
 	
 	print_uuid(&uuid);
 
@@ -650,6 +655,8 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 			if (!bt_gatt_client_write_value(cli->gatt, handle, (uint8_t *)&value, 2,
 								NULL, NULL, NULL))
 				printf("disable rx failed\n");
+			cli->rx_enabled = false;
+			cli->total_rx = 0;
 			
 		} else {
 			printf("currently not receiving\n");
@@ -682,6 +689,18 @@ static void cmd_start_rx_usage(void)
 {
 	printf("Usage: start_rx <handle> <interval> <payload length>\n");
 }
+
+static void write_cb(bool success, uint8_t att_ecode, void *user_data)
+{
+	if (success) {
+		PRLOG("\nWrite successful\n");
+		
+	} else {
+		PRLOG("\nWrite failed: %s (0x%02x)\n",
+				ecode_to_string(att_ecode), att_ecode);
+	}
+}
+
 static bool send_cb(void *user_data)
 {
 	struct client *cli = user_data;
@@ -696,9 +715,15 @@ static bool send_cb(void *user_data)
 	free(value);
 	
 	if (cli->stop_sending) {
-		//timeout_remove(cli->timer_id_send);
+		uint8_t value[1] = {0x00};
+		if (!bt_gatt_client_write_value(cli->gatt, cli->tx_ctl_handle, value, 1,
+								write_cb,
+								cli, NULL)) {
+			printf("Failed to initiate write procedure\n");
+			return false;
+		}
+		timeout_remove(cli->timer_id_send);
 		cli->timer_id_send = 0;
-		free(cli->w_value);
 		return false;
 	}
 	return true;
@@ -815,14 +840,29 @@ static void cmd_start_rx(struct client *cli, char *cmd_str)
 	free(value);
 		
 }
+
+static void ctl_write_cb(bool success, uint8_t att_ecode, void *user_data)
+{
+	struct client *cli = user_data;
+	if (success) {
+		PRLOG("\nWrite successful\n");
+
+		if (!cli->timer_id_send)
+			cli->timer_id_send = timeout_add(cli->interval, 
+						send_cb, cli, NULL);
+	} else {
+		PRLOG("\nWrite failed: %s (0x%02x)\n",
+				ecode_to_string(att_ecode), att_ecode);
+	}
+}
+
 static void cmd_start_tx(struct client *cli, char *cmd_str)
 {
 	char *argv[4];
 	int argc = 0;
-	uint16_t handle;
+	uint16_t handle, payload_len, interval;
 	char *endptr = NULL;
-	uint16_t payload_len, interval;
-	uint8_t *value;
+	uint8_t value[1];
 	int i;
 
 	if (!bt_gatt_client_is_ready(cli->gatt)) {
@@ -866,30 +906,16 @@ static void cmd_start_tx(struct client *cli, char *cmd_str)
 	cli->interval = interval;
 	cli->payload_len = payload_len;
 	
-	value = malloc(payload_len);
-	memset(value, cli->counter++, payload_len);
-
+	value[0] = 0x01;
 	cli->is_sending = true;
 	cli->stop_sending = false;
 
-	printf("w_handle = 0x%04x, length = %d, interval = %d\n", cli->w_handle, cli->payload_len, cli->interval);
-	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
-					false, value, cli->payload_len)) {
-		printf("Failed to initiate write without response "
-							"procedure\n");
-		goto done;
-	}
-
-	if (!cli->timer_id_send) {
-		cli->timer_id_send = timeout_add(cli->interval, send_cb, cli, NULL);
-	}
+	if (!bt_gatt_client_write_value(cli->gatt, cli->tx_ctl_handle, value, 1,
+								ctl_write_cb,
+								cli, NULL))
+		printf("Failed to initiate write procedure\n");
 
 	printf("Write command sent\n");
-
-done:
-	free(value);
-
-		
 }
 static void cmd_read_value(struct client *cli, char *cmd_str)
 {
@@ -976,24 +1002,6 @@ static struct option write_value_options[] = {
 	{ }
 };
 
-static void write_cb(bool success, uint8_t att_ecode, void *user_data)
-{
-	struct client *cli = user_data;
-	if (success) {
-	//	PRLOG("\nWrite successful\n");
-		if (!cli->stop_sending) {
-			if (!bt_gatt_client_write_value(cli->gatt, 
-						cli->w_handle, cli->w_value, cli->w_length,
-						write_cb, cli, NULL))
-				printf("Failed to initiate write procedure\n");
-
-		}
-		
-	} else {
-		PRLOG("\nWrite failed: %s (0x%02x)\n",
-				ecode_to_string(att_ecode), att_ecode);
-	}
-}
 
 static void cmd_write_value(struct client *cli, char *cmd_str)
 {
@@ -1076,23 +1084,12 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 		}
 	}
 
-	cli->w_value = malloc(length);
-	memcpy(cli->w_value, value, length);
-	cli->w_length = length;
-	cli->w_handle = handle;
-	cli->is_sending = true;
-	cli->stop_sending = false;
-
 	if (without_response) {
 		if (!bt_gatt_client_write_without_response(cli->gatt, handle,
 						signed_write, value, length)) {
 			printf("Failed to initiate write without response "
 								"procedure\n");
 			goto done;
-		}
-
-		if (!cli->timer_id_send) {
-			cli->timer_id_send = timeout_add(2, send_cb, cli, NULL);
 		}
 
 		printf("Write command sent\n");
