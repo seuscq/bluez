@@ -1441,6 +1441,7 @@ static void cmd_register_notify(struct client *cli, char *cmd_str)
 		printf("Invalid value handle: %s\n", argv[0]);
 		return;
 	}
+	printf("value-handle 0x%04x\n", value_handle);
 
 	id = bt_gatt_client_register_notify(cli->gatt, value_handle,
 							register_notify_cb,
