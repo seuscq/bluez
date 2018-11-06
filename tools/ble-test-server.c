@@ -113,7 +113,12 @@ struct server {
 	
 	unsigned int ble_rx_timeout_id;
 	bool ble_rx_enabled;
+	bool ble_tx_enabled;
 	uint8_t rx_counter;
+	long total_tx;
+
+	struct timespec start;
+	struct timespec end;
 
 };
 
@@ -447,23 +452,6 @@ static void not_ccc_write_cb(struct gatt_db_attribute *attrib,
 done:	
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
-static bool time_cb_print_rate(void *user_data)
-{
-	struct server *server = user_data;
-	int rate;
-
-	rate = server->count -server->old_count;
-	
-	PRLOG("Rate: %d Bytes/s\n", rate);
-	server->old_count = server->count;
-
-	if (!rate) {
-		timeout_remove(server->timer_id_count);
-		server->timer_id_count  = 0;
-		return false;
-	}
-	return true;
-}
 
 static void ble_rate_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
@@ -474,15 +462,10 @@ static void ble_rate_write_cb(struct gatt_db_attribute *attrib,
 
 	struct server *server = user_data;
 	uint8_t ecode = 0;
-	static uint32_t count = 0;
 
-	// TODO: processing data
-	count += len;
-	server->count = count;
-	if (!server->timer_id_count)
-		server->timer_id_count = timeout_add(1000, time_cb_print_rate, 
-							server, NULL);
-	//PRLOG("received %d bytes in total.\n", count);
+
+	if (server->ble_tx_enabled)
+		server->total_tx += len;
 
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
@@ -671,8 +654,56 @@ static void interval_length_cb(struct gatt_db_attribute *attrib,
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
+static void ctl_write_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					const uint8_t *value, size_t len,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	struct server *server = user_data;
+	uint8_t ecode = 0;
+
+	if (!value || len != 1) {
+		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+		goto done;
+	}
+	
+	if (offset) {
+		ecode = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	if (value[0] == 0x00) {
+#define BILLION 	1E9
+		double s;
+		server->ble_tx_enabled = false;
+		clock_gettime(CLOCK_REALTIME, &server->end);
+		s = server->end.tv_sec - server->start.tv_sec +
+				(server->end.tv_nsec - server->start.tv_nsec)/BILLION;
+		printf("time elapsed %1fs\n", s);
+		printf("speed %1fB/s\n", server->total_tx/s);
+		printf("receive total Bytes %ld\n", server->total_tx);
+		goto done;
+	} else if(value[0] == 0x01) {
+		if(server->ble_tx_enabled) {
+			PRLOG("ble tx already enable\n");	
+			goto done;
+		}
+		clock_gettime(CLOCK_REALTIME, &server->start);
+		
+		server->ble_tx_enabled = true;		
+	}
+
+	PRLOG("BLE TX Enabled: %s\n",
+				server->ble_tx_enabled ? "true" : "false");
+
+
+done:	
+	gatt_db_attribute_write_result(attrib, id, ecode);
+}
 #define UUID_BLE_RATE 		0xFFDD
 #define UUID_BLE_RATE_TX	0xFFD1
+#define UUID_BLE_RATE_TX_CTRL	0xFFD1
 
 #define UUID_BLE_RATE_RX	0xFFD2
 #define UUID_BLE_RATE_RX_INFO	0xFFD3
@@ -694,6 +725,13 @@ static void populate_rate_service(struct server *server)
 						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
 						NULL, ble_rate_write_cb,
 						server);
+	bt_uuid16_create(&uuid, UUID_BLE_RATE_TX_CTRL);
+	gatt_db_service_add_characteristic(service, &uuid,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE,
+						NULL, ctl_write_cb,
+						server);
+
 
 	bt_uuid16_create(&uuid, UUID_BLE_RATE_RX);
 	ind_char = gatt_db_service_add_characteristic(service, &uuid,
