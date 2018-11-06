@@ -674,13 +674,30 @@ static bool send_cb(void *user_data)
 	return true;
 }
 
+static void cmd_register_notify(struct client *cli, char *cmd_str);
+static void write_cb_1(bool success, uint8_t att_ecode, void *user_data)
+{
+	struct client *cli = user_data;
+	if (success) {
+		PRLOG("\nWrite successful\n");
+		cmd_register_notify(cli, "0x0017");
+	} else {
+		PRLOG("\nWrite failed: %s (0x%02x)\n",
+				ecode_to_string(att_ecode), att_ecode);
+	}
+}
 static void write_interval_cb(bool success, uint8_t att_ecode, void *user_data)
 {
-	//struct client *cli = user_data;
+	struct client *cli = user_data;
+	uint16_t value;
+	uint16_t handle;
+
 	if (success) {
-	//	PRLOG("\nWrite successful\n");
-	//	enable notification
-		
+		value = 0x0001;
+		handle = 0x0018; // TODO: assign handle automatically
+		if (!bt_gatt_client_write_value(cli->gatt, handle, (uint8_t *)&value, 2,
+								write_cb_1, cli, NULL))
+			printf("write error\n");
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
 				ecode_to_string(att_ecode), att_ecode);
