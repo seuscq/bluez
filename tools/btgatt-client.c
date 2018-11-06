@@ -648,6 +648,10 @@ static void cmd_start_tx_usage(void)
 	printf("Usage: start_tx <handle> <interval> <payload length>\n");
 }
 
+static void cmd_start_rx_usage(void)
+{
+	printf("Usage: start_rx <handle> <interval> <payload length>\n");
+}
 static bool send_cb(void *user_data)
 {
 	struct client *cli = user_data;
@@ -670,6 +674,82 @@ static bool send_cb(void *user_data)
 	return true;
 }
 
+static void write_interval_cb(bool success, uint8_t att_ecode, void *user_data)
+{
+	//struct client *cli = user_data;
+	if (success) {
+	//	PRLOG("\nWrite successful\n");
+	//	enable notification
+		
+	} else {
+		PRLOG("\nWrite failed: %s (0x%02x)\n",
+				ecode_to_string(att_ecode), att_ecode);
+	}
+}
+
+static void cmd_start_rx(struct client *cli, char *cmd_str)
+{
+	char *argv[4];
+	int argc = 0;
+	uint16_t handle;
+	char *endptr = NULL;
+	uint16_t payload_len, interval;
+	uint8_t *value;
+	int i;
+
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	if (!parse_args(cmd_str, 3, argv, &argc)) {
+		cmd_start_rx_usage();
+		return;
+	}
+
+	for (i = 0; i < argc; i++)
+		printf("argv[%d] = %s\t\t", i, argv[i]);
+	printf("\n");
+	
+	if (argc != 3) {
+		cmd_start_rx_usage();
+		return;
+	}
+
+	handle = strtol(argv[0], &endptr, 16);
+	if (!endptr || *endptr != '\0' || !handle) {
+		printf("Invalid value handle: %s\n", argv[0]);
+		return;
+	}
+
+	payload_len = strtol(argv[2], &endptr, 10);
+	if (!endptr || *endptr != '\0' || !payload_len) {
+		printf("Invalid value payload length: %s\n", argv[2]);
+		return;
+	}
+
+	interval = strtol(argv[1], &endptr, 10);
+	if (!endptr || *endptr != '\0' || !interval) {
+		printf("Invalid value interval: %s\n", argv[1]);
+		return;
+	}
+	
+	printf("w_handle = 0x%04x, length = %d, interval = %d\n", cli->w_handle, cli->payload_len, cli->interval);
+
+	value = malloc(4);
+	memcpy(value, (char *)&interval, 2);
+	memcpy(value + 2, (char *)&payload_len, 2);
+
+	// write interval and payload_len
+	
+	if (!bt_gatt_client_write_value(cli->gatt, handle, value, 4,
+								write_interval_cb,
+								cli, NULL))
+		printf("Failed to initiate write procedure\n");
+
+	free(value);
+		
+}
 static void cmd_start_tx(struct client *cli, char *cmd_str)
 {
 	char *argv[4];
@@ -1522,6 +1602,7 @@ static struct {
 	{ "help", cmd_help, "\tDisplay help message" },
 	{ "stop", cmd_stop, "\tstop test" },
 	{ "start_tx", cmd_start_tx, "\tstart test tx" },
+	{ "start_rx", cmd_start_rx, "\tstart test rx" },
 	{ "services", cmd_services, "\tShow discovered services" },
 	{ "read-value", cmd_read_value,
 				"\tRead a characteristic or descriptor value" },
