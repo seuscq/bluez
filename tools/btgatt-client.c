@@ -50,7 +50,12 @@
 
 #define ATT_CID 4
 
-#define BILLION	1E9
+#define BILLION			1E9
+
+#define UUID_BLE_RATE 		0xFFDD
+#define UUID_BLE_RATE_TX	0xFFD1
+
+#define UUID_BLE_RATE_RX	0xFFD2
 
 #define PRLOG(...) \
 	printf(__VA_ARGS__); print_prompt();
@@ -91,7 +96,7 @@ struct client {
 	struct timespec start;
 	struct timespec end;
 	long total_rx;
-	
+	uint16_t ble_notif_handle;
 };
 
 static void print_prompt(void)
@@ -323,10 +328,11 @@ static void print_desc(struct gatt_db_attribute *attr, void *user_data)
 
 static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 {
+	struct client *cli = user_data;
 	uint16_t handle, value_handle;
 	uint8_t properties;
 	uint16_t ext_prop;
-	bt_uuid_t uuid;
+	bt_uuid_t uuid, uuid_rate_rx;
 
 	if (!gatt_db_attribute_get_char_data(attr, &handle,
 								&value_handle,
@@ -339,6 +345,12 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 				" - start: 0x%04x, value: 0x%04x, "
 				"props: 0x%02x, ext_props: 0x%04x, uuid: ",
 				handle, value_handle, properties, ext_prop);
+	bt_uuid16_create(&uuid_rate_rx, UUID_BLE_RATE_RX);
+	if(!bt_uuid_cmp(&uuid, &uuid_rate_rx)){
+		cli->ble_notif_handle = value_handle + 1;
+		printf("ble notif handle = 0x%04x\n", cli->ble_notif_handle);
+	}
+	
 	print_uuid(&uuid);
 
 	gatt_db_service_foreach_desc(attr, print_desc, NULL);
@@ -361,7 +373,7 @@ static void print_service(struct gatt_db_attribute *attr, void *user_data)
 	print_uuid(&uuid);
 
 	gatt_db_service_foreach_incl(attr, print_incl, cli);
-	gatt_db_service_foreach_char(attr, print_chrc, NULL);
+	gatt_db_service_foreach_char(attr, print_chrc, cli);
 
 	printf("\n");
 }
@@ -628,7 +640,7 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 		if (cli->rx_enabled) {
 			double s;
 			uint16_t value = 0x0000;
-			uint16_t handle = 0x0018; // TODO: assign handle automatically
+			uint16_t handle = cli->ble_notif_handle; // TODO: assign handle automatically
 			clock_gettime(CLOCK_REALTIME, &cli->end);
 			s = cli->end.tv_sec - cli->start.tv_sec +
 					(cli->end.tv_nsec - cli->start.tv_nsec)/BILLION;
@@ -714,7 +726,7 @@ static void write_interval_cb(bool success, uint8_t att_ecode, void *user_data)
 
 	if (success) {
 		value = 0x0001;
-		handle = 0x0018; // TODO: assign handle automatically
+		handle = cli->ble_notif_handle; // TODO: assign handle automatically
 		if (!bt_gatt_client_write_value(cli->gatt, handle, (uint8_t *)&value, 2,
 								write_cb_1, cli, NULL))
 			printf("write error\n");

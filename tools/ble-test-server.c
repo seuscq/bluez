@@ -675,7 +675,7 @@ static void interval_length_cb(struct gatt_db_attribute *attrib,
 #define UUID_BLE_RATE_TX	0xFFD1
 
 #define UUID_BLE_RATE_RX	0xFFD2
-#define UUID_BLE_RATE_RX_I	0xFFD3
+#define UUID_BLE_RATE_RX_INFO	0xFFD3
 
 static void populate_rate_service(struct server *server)
 {
@@ -708,7 +708,7 @@ static void populate_rate_service(struct server *server)
 					NULL,
 					not_ccc_write_cb, server);
 
-	bt_uuid16_create(&uuid, UUID_BLE_RATE_RX_I);
+	bt_uuid16_create(&uuid, UUID_BLE_RATE_RX_INFO);
 	gatt_db_service_add_characteristic(service, &uuid,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE,
