@@ -106,7 +106,10 @@ struct server {
 	uint32_t old_count;
 	uint32_t timer_id_count;
 
+	/* rx */
 	uint16_t ble_rate_rx;
+	uint16_t interval;
+	uint16_t payload_len;	
 
 };
 
@@ -619,12 +622,8 @@ static void interval_length_cb(struct gatt_db_attribute *attrib,
 	static uint32_t count = 0;
 
 	// TODO: processing data
-	count += len;
-	server->count = count;
-	if (!server->timer_id_count)
-		server->timer_id_count = timeout_add(1000, time_cb_print_rate, 
-							server, NULL);
-	//PRLOG("received %d bytes in total.\n", count);
+	server->interval = value[0] | value[1] << 8;
+	server->payload_len = value[2] | value [3] << 8;
 
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
@@ -640,9 +639,8 @@ static void populate_rate_service(struct server *server)
 	bt_uuid_t uuid;
 	struct gatt_db_attribute *service, *ind_char;
 
-	/* Add Heart Rate Service */
 	bt_uuid16_create(&uuid, UUID_BLE_RATE);
-	service = gatt_db_add_service(server->db, &uuid, true, 3);
+	service = gatt_db_add_service(server->db, &uuid, true, 8);
 	server->w_handle = gatt_db_attribute_get_handle(service);
 
 
