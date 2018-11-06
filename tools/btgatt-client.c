@@ -32,6 +32,7 @@
 #include <getopt.h>
 #include <limits.h>
 #include <errno.h>
+#include <time.h>
 
 #include "lib/bluetooth.h"
 #include "lib/hci.h"
@@ -48,6 +49,8 @@
 #include "src/shared/timeout.h"
 
 #define ATT_CID 4
+
+#define BILLION	1E9
 
 #define PRLOG(...) \
 	printf(__VA_ARGS__); print_prompt();
@@ -84,6 +87,10 @@ struct client {
 	int counter;
 	uint16_t payload_len;
 	uint16_t interval;
+	bool rx_enabled;
+	struct timespec start;
+	struct timespec end;
+	long total_rx;
 	
 };
 
@@ -618,9 +625,20 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 
 	if (!strcmp(argv[0], "-r")) {
 		// stop receiving;
-		if (cli->is_receiving) {
-			cli->stop_receiving = true;
-			cli->is_receiving = false;
+		if (cli->rx_enabled) {
+			double s;
+			uint16_t value = 0x0000;
+			uint16_t handle = 0x0018; // TODO: assign handle automatically
+			clock_gettime(CLOCK_REALTIME, &cli->end);
+			s = cli->end.tv_sec - cli->start.tv_sec +
+					(cli->end.tv_nsec - cli->start.tv_nsec)/BILLION;
+			printf("time elapsed %1fs\n", s);
+			printf("speed %1fB/s\n", cli->total_rx/s);
+			printf("receive total Bytes %ld\n", cli->total_rx);
+			if (!bt_gatt_client_write_value(cli->gatt, handle, (uint8_t *)&value, 2,
+								NULL, NULL, NULL))
+				printf("disable rx failed\n");
+			
 		} else {
 			printf("currently not receiving\n");
 		}
@@ -680,6 +698,8 @@ static void write_cb_1(bool success, uint8_t att_ecode, void *user_data)
 	struct client *cli = user_data;
 	if (success) {
 		PRLOG("\nWrite successful\n");
+		cli->rx_enabled = true;
+		clock_gettime(CLOCK_REALTIME, &cli->start);
 		cmd_register_notify(cli, "0x0017");
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
@@ -1390,21 +1410,13 @@ static void register_notify_usage(void)
 static void notify_cb(uint16_t value_handle, const uint8_t *value,
 					uint16_t length, void *user_data)
 {
-	int i;
+	struct client *cli = user_data;
+	
+	
+	if (cli->rx_enabled)
+		cli->total_rx += length;
+	return;
 
-	printf("\n\tHandle Value Not/Ind: 0x%04x - ", value_handle);
-
-	if (length == 0) {
-		PRLOG("(0 bytes)\n");
-		return;
-	}
-
-	printf("(%u bytes): ", length);
-
-	for (i = 0; i < length; i++)
-		printf("%02x ", value[i]);
-
-	PRLOG("\n");
 }
 
 static void register_notify_cb(uint16_t att_ecode, void *user_data)
@@ -1416,6 +1428,7 @@ static void register_notify_cb(uint16_t att_ecode, void *user_data)
 	}
 
 	PRLOG("Registered notify handler!\n");
+
 }
 
 static void cmd_register_notify(struct client *cli, char *cmd_str)
@@ -1445,7 +1458,7 @@ static void cmd_register_notify(struct client *cli, char *cmd_str)
 
 	id = bt_gatt_client_register_notify(cli->gatt, value_handle,
 							register_notify_cb,
-							notify_cb, NULL, NULL);
+							notify_cb, cli, NULL);
 	if (!id) {
 		printf("Failed to register notify handler\n");
 		return;
