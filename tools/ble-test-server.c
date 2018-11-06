@@ -437,7 +437,8 @@ static void not_ccc_write_cb(struct gatt_db_attribute *attrib,
 	PRLOG("BLE RX Enabled: %s\n",
 				server->ble_rx_enabled ? "true" : "false");
 	if (!server->ble_rx_enabled) {
-		timeout_remove(server->hr_timeout_id);
+		printf("remove repeated sending.\n");
+		timeout_remove(server->ble_rx_timeout_id);
 		goto done;
 	}
 
