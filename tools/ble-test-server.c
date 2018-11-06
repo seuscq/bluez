@@ -107,9 +107,13 @@ struct server {
 	uint32_t timer_id_count;
 
 	/* rx */
-	uint16_t ble_rate_rx;
+	uint16_t ble_rate_rx_handle;
 	uint16_t interval;
 	uint16_t payload_len;	
+	
+	unsigned int ble_rx_timeout_id;
+	bool ble_rx_enabled;
+	uint8_t rx_counter;
 
 };
 
@@ -381,24 +385,63 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
+static bool ble_send_notfi_cb(void *user_data)
+{
+	struct server *server = user_data;
+	uint8_t *value;
+
+
+	//printf("sending notif handle = 0x%04x, length = %d\n",server->ble_rate_rx_handle,
+							//server->payload_len);
+	value = malloc(server->payload_len);
+	memset(value, server->rx_counter++, server->payload_len);
+
+	bt_gatt_server_send_notification(server->gatt,
+						server->ble_rate_rx_handle,
+						value, server->payload_len);
+
+
+	return true;
+}
+
 static void not_ccc_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	//struct server *server = user_data;
+	struct server *server = user_data;
 	uint8_t ecode = 0;
 
 	if (!value || len != 2) {
 		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
 		goto done;
 	}
-
+	
 	if (offset) {
 		ecode = BT_ATT_ERROR_INVALID_OFFSET;
 		goto done;
 	}
+
+	if (value[0] == 0x00) {
+		server->ble_rx_enabled = false;
+	} else if(value[0] == 0x01) {
+		if(server->ble_rx_enabled) {
+			PRLOG("ble rx already enable\n");	
+			goto done;
+		}
+		
+		server->ble_rx_enabled = true;		
+	}
+
+	PRLOG("BLE RX Enabled: %s\n",
+				server->ble_rx_enabled ? "true" : "false");
+	if (!server->ble_rx_enabled) {
+		timeout_remove(server->hr_timeout_id);
+		goto done;
+	}
+
+	server->ble_rx_timeout_id = timeout_add(server->interval, ble_send_notfi_cb, server, NULL);
 
 done:	
 	gatt_db_attribute_write_result(attrib, id, ecode);
@@ -656,7 +699,7 @@ static void populate_rate_service(struct server *server)
 						BT_ATT_PERM_NONE,
 						BT_GATT_CHRC_PROP_NOTIFY,
 						NULL, NULL, NULL);
-	server->ble_rate_rx = gatt_db_attribute_get_handle(ind_char);
+	server->ble_rate_rx_handle = gatt_db_attribute_get_handle(ind_char);
 
 	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
 	gatt_db_service_add_descriptor(service, &uuid,
