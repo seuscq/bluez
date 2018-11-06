@@ -619,7 +619,6 @@ static void interval_length_cb(struct gatt_db_attribute *attrib,
 
 	struct server *server = user_data;
 	uint8_t ecode = 0;
-	static uint32_t count = 0;
 
 	// TODO: processing data
 	server->interval = value[0] | value[1] << 8;
