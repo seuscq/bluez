@@ -714,7 +714,7 @@ static void populate_rate_service(struct server *server)
 	struct gatt_db_attribute *service, *ind_char;
 
 	bt_uuid16_create(&uuid, UUID_BLE_RATE);
-	service = gatt_db_add_service(server->db, &uuid, true, 8);
+	service = gatt_db_add_service(server->db, &uuid, true, 10);
 	server->w_handle = gatt_db_attribute_get_handle(service);
 
 
