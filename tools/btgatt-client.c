@@ -704,15 +704,31 @@ static bool send_cb(void *user_data)
 	return true;
 }
 
-static void cmd_register_notify(struct client *cli, char *cmd_str);
-static void write_cb_1(bool success, uint8_t att_ecode, void *user_data)
+static void notify_cb(uint16_t value_handle, const uint8_t *value,
+					uint16_t length, void *user_data);
+static void register_notify_cb(uint16_t att_ecode, void *user_data);
+static void notf_write_cb(bool success, uint8_t att_ecode, void *user_data)
 {
 	struct client *cli = user_data;
+
 	if (success) {
+		unsigned int id;
+		uint16_t value_handle = cli->ble_notif_handle - 1;
+
 		PRLOG("\nWrite successful\n");
+
 		cli->rx_enabled = true;
 		clock_gettime(CLOCK_REALTIME, &cli->start);
-		cmd_register_notify(cli, "0x0017");
+
+		id = bt_gatt_client_register_notify(cli->gatt, value_handle,
+								register_notify_cb,
+								notify_cb, cli, NULL);
+		if (!id) {
+			printf("Failed to register notify handler\n");
+			return;
+		}
+	
+		printf("Registering notify handler with id: %u\n", id);
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
 				ecode_to_string(att_ecode), att_ecode);
@@ -728,7 +744,7 @@ static void write_interval_cb(bool success, uint8_t att_ecode, void *user_data)
 		value = 0x0001;
 		handle = cli->ble_notif_handle; // TODO: assign handle automatically
 		if (!bt_gatt_client_write_value(cli->gatt, handle, (uint8_t *)&value, 2,
-								write_cb_1, cli, NULL))
+								notf_write_cb, cli, NULL))
 			printf("write error\n");
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
