@@ -83,13 +83,10 @@ struct client {
 
 	/* ble test */
 	uint16_t tx_handle;
-	uint16_t w_length;
-	uint8_t *w_value;
 	uint8_t *value;
 
 	int counter;
 	uint16_t payload_len;
-	uint16_t interval;
 	bool rx_enabled;
 	bool tx_enabled;
 	struct timespec start;
@@ -900,10 +897,6 @@ static void ctl_write_cb(bool success, uint8_t att_ecode, void *user_data)
 			printf("fatal io error\n");
 			return;
 		}
-
-		//if (!cli->timer_id_send)
-			//cli->timer_id_send = timeout_add(cli->interval, 
-			//			send_cb, cli, NULL);
 	} else {
 		PRLOG("\nWrite failed: %s (0x%02x)\n",
 				ecode_to_string(att_ecode), att_ecode);
