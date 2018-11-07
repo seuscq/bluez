@@ -54,8 +54,8 @@
 
 #define UUID_BLE_RATE 		0xFFDD
 #define UUID_BLE_RATE_TX	0xFFD1
+#define UUID_BLE_RATE_TX_CTRL	0xFFD4
 
-#define UUID_BLE_RATE_TX_CTRL	0xFFD1
 #define UUID_BLE_RATE_RX	0xFFD2
 
 #define PRLOG(...) \
@@ -81,7 +81,7 @@ struct client {
 	unsigned int reliable_session_id;
 
 	/* ble test */
-	uint16_t w_handle;
+	uint16_t tx_handle;
 	uint16_t w_length;
 	uint8_t *w_value;
 	bool 	is_receiving;
@@ -336,7 +336,7 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 	uint16_t handle, value_handle;
 	uint8_t properties;
 	uint16_t ext_prop;
-	bt_uuid_t uuid, uuid_rate_rx, uuid_rate_ctl;
+	bt_uuid_t uuid, tmp_rx, tmp_tx, tmp_tx_ctl;
 
 	if (!gatt_db_attribute_get_char_data(attr, &handle,
 								&value_handle,
@@ -350,14 +350,24 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 				"props: 0x%02x, ext_props: 0x%04x, uuid: ",
 				handle, value_handle, properties, ext_prop);
 
-	bt_uuid16_create(&uuid_rate_rx, UUID_BLE_RATE_RX);
-	if(!bt_uuid_cmp(&uuid, &uuid_rate_rx))
+	bt_uuid16_create(&tmp_rx, UUID_BLE_RATE_RX);
+	if(!bt_uuid_cmp(&uuid, &tmp_rx)) {
 		cli->ble_notif_handle = value_handle + 1;
+		printf("notfi handle 0x%04x\n", cli->ble_notif_handle);
+	}
 
-	bt_uuid16_create(&uuid_rate_ctl, UUID_BLE_RATE_TX_CTRL);
-	if(!bt_uuid_cmp(&uuid, &uuid_rate_ctl))
+	bt_uuid16_create(&tmp_tx_ctl, UUID_BLE_RATE_TX_CTRL);
+	if(!bt_uuid_cmp(&uuid, &tmp_tx_ctl)) {
 		cli->tx_ctl_handle = value_handle;
+		printf("tx_ctl handle 0x%04x\n", cli->tx_ctl_handle);
+	}
 	
+	bt_uuid16_create(&tmp_tx, UUID_BLE_RATE_TX);
+	if(!bt_uuid_cmp(&uuid, &tmp_tx)) {
+		cli->tx_handle = value_handle;
+		printf("tx_handle 0x%04x\n", cli->tx_handle);
+	}
+
 	print_uuid(&uuid);
 
 	gatt_db_service_foreach_desc(attr, print_desc, NULL);
@@ -691,12 +701,12 @@ static void cmd_stop(struct client *cli, char *cmd_str)
 
 static void cmd_start_tx_usage(void)
 {
-	printf("Usage: start_tx <handle> <interval> <payload length>\n");
+	printf("Usage: start_tx <payload length>\n");
 }
 
 static void cmd_start_rx_usage(void)
 {
-	printf("Usage: start_rx <handle> <interval> <payload length>\n");
+	printf("Usage: start_rx <payload length>\n");
 }
 
 static void write_cb(bool success, uint8_t att_ecode, void *user_data)
@@ -717,7 +727,7 @@ static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 //
 //	value = malloc(cli->payload_len);
 //	memset(value, cli->counter++, cli->payload_len);
-//	if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
+//	if (!bt_gatt_client_write_without_response(cli->gatt, cli->tx_handle,
 //						false, value, cli->payload_len)) {
 //		printf("Failed to initiate write without response procedure\n");	
 //	}
@@ -833,7 +843,7 @@ static void cmd_start_rx(struct client *cli, char *cmd_str)
 		return;
 	}
 	
-	printf("w_handle = 0x%04x, length = %d, interval = %d\n", cli->w_handle, cli->payload_len, cli->interval);
+	printf("tx_handle = 0x%04x, length = %d, interval = %d\n", cli->tx_handle, cli->payload_len, cli->interval);
 
 	value = malloc(4);
 	memcpy(value, (char *)&interval, 2);
@@ -860,7 +870,7 @@ static void pdu_sent_cb(void *data)
 		unsigned id;
 	
 		op = BT_ATT_OP_WRITE_CMD;
-		put_le16(cli->w_handle, pdu);
+		put_le16(cli->tx_handle, pdu);
 		memset(pdu + 2, cli->counter++, cli->payload_len);
 	
 		id = bt_att_send(cli->att, op, pdu, sizeof(pdu), NULL, cli,
@@ -891,7 +901,7 @@ static void ctl_write_cb(bool success, uint8_t att_ecode, void *user_data)
 		cli->value = value;
 		for (i = 0; i < 10; i++) {
 			memset(value, cli->counter++, cli->payload_len);
-			if (!bt_gatt_client_write_without_response(cli->gatt, cli->w_handle,
+			if (!bt_gatt_client_write_without_response(cli->gatt, cli->tx_handle,
 								false, value, cli->payload_len)) {
 				printf("Failed to initiate write without response procedure\n");	
 			}
@@ -899,7 +909,7 @@ static void ctl_write_cb(bool success, uint8_t att_ecode, void *user_data)
 		
 		op = BT_ATT_OP_WRITE_CMD;
 
-		put_le16(cli->w_handle, pdu);
+		put_le16(cli->tx_handle, pdu);
 		memcpy(pdu + 2, value, cli->payload_len);
 
 		id = bt_att_send(cli->att, op, pdu, sizeof(pdu), NULL, cli,
@@ -920,9 +930,9 @@ static void ctl_write_cb(bool success, uint8_t att_ecode, void *user_data)
 
 static void cmd_start_tx(struct client *cli, char *cmd_str)
 {
-	char *argv[4];
+	char *argv[2];
 	int argc = 0;
-	uint16_t handle, payload_len, interval;
+	uint16_t payload_len;
 	char *endptr = NULL;
 	uint8_t value[1];
 	int i;
@@ -932,7 +942,7 @@ static void cmd_start_tx(struct client *cli, char *cmd_str)
 		return;
 	}
 
-	if (!parse_args(cmd_str, 3, argv, &argc)) {
+	if (!parse_args(cmd_str, 1, argv, &argc)) {
 		cmd_start_tx_usage();
 		return;
 	}
@@ -941,42 +951,24 @@ static void cmd_start_tx(struct client *cli, char *cmd_str)
 		printf("argv[%d] = %s\t\t", i, argv[i]);
 	printf("\n");
 	
-	if (argc != 3) {
+	if (argc != 1) {
 		cmd_start_tx_usage();
 		return;
 	}
 
-	handle = strtol(argv[0], &endptr, 16);
-	if (!endptr || *endptr != '\0' || !handle) {
-		printf("Invalid value handle: %s\n", argv[0]);
-		return;
-	}
-
-	payload_len = strtol(argv[2], &endptr, 10);
+	payload_len = strtol(argv[0], &endptr, 10);
 	if (!endptr || *endptr != '\0' || !payload_len) {
-		printf("Invalid value payload length: %s\n", argv[2]);
-		return;
-	}
-
-	interval = strtol(argv[1], &endptr, 10);
-	if (!endptr || *endptr != '\0' || !interval) {
-		printf("Invalid value interval: %s\n", argv[1]);
+		printf("Invalid value payload length: %s\n", argv[0]);
 		return;
 	}
 	
-	cli->w_handle = handle;
-	cli->interval = interval;
 	cli->payload_len = payload_len;
 	
 	value[0] = 0x01;
-	cli->is_sending = true;
-
 	if (!bt_gatt_client_write_value(cli->gatt, cli->tx_ctl_handle, value, 1,
 								ctl_write_cb,
 								cli, NULL))
 		printf("Failed to initiate write procedure\n");
-
-	printf("Write command sent\n");
 }
 static void cmd_read_value(struct client *cli, char *cmd_str)
 {
