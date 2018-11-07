@@ -107,14 +107,14 @@ struct server {
 	uint32_t timer_id_count;
 
 	/* rx */
-	uint16_t ble_rate_rx_handle;
+	uint16_t rx_handle;
 	uint16_t interval;
 	uint16_t payload_len;	
 	
 	unsigned int ble_rx_timeout_id;
 	bool ble_rx_enabled;
 	bool ble_tx_enabled;
-	uint8_t rx_counter;
+	uint8_t counter;
 	long total_tx;
 
 	struct timespec start;
@@ -390,23 +390,28 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-static bool ble_send_notfi_cb(void *user_data)
+static void notif_sent_cb(void *data)
 {
-	struct server *server = user_data;
-	uint8_t *value;
-
-
-	//printf("sending notif handle = 0x%04x, length = %d\n",server->ble_rate_rx_handle,
-							//server->payload_len);
-	value = malloc(server->payload_len);
-	memset(value, server->rx_counter++, server->payload_len);
-
-	bt_gatt_server_send_notification(server->gatt,
-						server->ble_rate_rx_handle,
-						value, server->payload_len);
-
-
-	return true;
+	struct server *server= data;
+	
+	if (server->ble_rx_enabled) {
+		uint8_t pdu[2 + server->payload_len];
+		uint8_t op;
+		unsigned id;
+	
+		op = BT_ATT_OP_HANDLE_VAL_NOT;
+		put_le16(server->rx_handle, pdu);
+		memset(pdu + 2, server->counter++, server->payload_len);
+	
+		id = bt_att_send(server->att, op, pdu, sizeof(pdu), NULL, server,
+									notif_sent_cb);
+		if (!id) {
+			printf("fatal io error\n");
+			return; 
+		}
+	}
+	return;
+	
 }
 
 static void not_ccc_write_cb(struct gatt_db_attribute *attrib,
@@ -431,23 +436,34 @@ static void not_ccc_write_cb(struct gatt_db_attribute *attrib,
 	if (value[0] == 0x00) {
 		server->ble_rx_enabled = false;
 	} else if(value[0] == 0x01) {
+		uint8_t *value, i;
+		uint8_t *pdu;
 		if(server->ble_rx_enabled) {
 			PRLOG("ble rx already enable\n");	
 			goto done;
 		}
-		
 		server->ble_rx_enabled = true;		
-	}
 
-	PRLOG("BLE RX Enabled: %s\n",
-				server->ble_rx_enabled ? "true" : "false");
-	if (!server->ble_rx_enabled) {
-		printf("remove repeated sending.\n");
-		timeout_remove(server->ble_rx_timeout_id);
-		goto done;
-	}
+		value = malloc(server->payload_len);
+		for (i = 0; i < 10; i++) {
+			memset(value, server->counter++, server->payload_len);
+			bt_gatt_server_send_notification(server->gatt,
+							server->rx_handle,
+							value, server->payload_len);
+		}
 
-	server->ble_rx_timeout_id = timeout_add(server->interval, ble_send_notfi_cb, server, NULL);
+		pdu = malloc(2 + server->payload_len);
+		if (!pdu)
+			return; 
+	
+		put_le16(server->rx_handle, pdu);
+		memset(pdu + 2, server->counter++, server->payload_len);
+	
+		bt_att_send(server->att, BT_ATT_OP_HANDLE_VAL_NOT, pdu,
+							server->payload_len + 2, NULL, server, notif_sent_cb);
+		free(pdu);
+		
+	}
 
 done:	
 	gatt_db_attribute_write_result(attrib, id, ecode);
@@ -637,7 +653,7 @@ static void populate_hr_service(struct server *server)
 		gatt_db_service_set_active(service, true);
 }
 
-static void interval_length_cb(struct gatt_db_attribute *attrib,
+static void paylen_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
 					uint8_t opcode, struct bt_att *att,
@@ -648,8 +664,7 @@ static void interval_length_cb(struct gatt_db_attribute *attrib,
 	uint8_t ecode = 0;
 
 	// TODO: processing data
-	server->interval = value[0] | value[1] << 8;
-	server->payload_len = value[2] | value [3] << 8;
+	server->payload_len= value[0] | value[1] << 8;
 
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
@@ -684,7 +699,6 @@ static void ctl_write_cb(struct gatt_db_attribute *attrib,
 		printf("speed %1fB/s\n", server->total_tx/s);
 		printf("receive total Bytes %ld\n", server->total_tx);
 		server->total_tx = 0;
-		goto done;
 	} else if(value[0] == 0x01) {
 		if(server->ble_tx_enabled) {
 			PRLOG("ble tx already enable\n");	
@@ -695,11 +709,11 @@ static void ctl_write_cb(struct gatt_db_attribute *attrib,
 		server->ble_tx_enabled = true;		
 	}
 
+done:	
 	PRLOG("BLE TX Enabled: %s\n",
 				server->ble_tx_enabled ? "true" : "false");
 
 
-done:	
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 #define UUID_BLE_RATE 		0xFFDD
@@ -739,7 +753,7 @@ static void populate_rate_service(struct server *server)
 						BT_ATT_PERM_NONE,
 						BT_GATT_CHRC_PROP_NOTIFY,
 						NULL, NULL, NULL);
-	server->ble_rate_rx_handle = gatt_db_attribute_get_handle(ind_char);
+	server->rx_handle = gatt_db_attribute_get_handle(ind_char);
 
 	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
 	gatt_db_service_add_descriptor(service, &uuid,
@@ -751,7 +765,7 @@ static void populate_rate_service(struct server *server)
 	gatt_db_service_add_characteristic(service, &uuid,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE,
-						NULL, interval_length_cb,
+						NULL, paylen_cb,
 						server);
 
 	gatt_db_service_set_active(service, true);
