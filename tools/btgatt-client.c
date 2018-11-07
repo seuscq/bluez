@@ -349,9 +349,9 @@ static void print_chrc(struct gatt_db_attribute *attr, void *user_data)
 	}
 
 	bt_uuid16_create(&tmp_rx_info, UUID_BLE_RATE_RX_INFO);
-	if(!bt_uuid_cmp(&uuid, &tmp_tx)) {
+	if(!bt_uuid_cmp(&uuid, &tmp_rx_info)) {
 		cli->rx_info_handle = value_handle;
-		printf("tx_handle 0x%04x\n", cli->tx_handle);
+		printf("rx_info_handle 0x%04x\n", cli->rx_info_handle);
 	}
 
 	bt_uuid16_create(&tmp_tx_ctl, UUID_BLE_RATE_TX_CTRL);
@@ -829,7 +829,7 @@ static void cmd_start_rx(struct client *cli, char *cmd_str)
 	}
 	
 	value = malloc(2);
-	memcpy(value + 2, (char *)&payload_len, 2);
+	memcpy(value, (char *)&payload_len, 2);
 
 	//payload_len
 	
