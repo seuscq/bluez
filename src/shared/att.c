@@ -1239,6 +1239,9 @@ unsigned int bt_att_send(struct bt_att *att, uint8_t opcode,
 	struct att_send_op *op;
 	bool result;
 
+//	printf("att = %p, op = %d, pdu = %p, len = %d, callback = %p, user_data = %p, destroy = %p\n",
+//			att, opcode, pdu, length, callback, user_data, destroy);
+
 	if (!att || !att->io)
 		return 0;
 
